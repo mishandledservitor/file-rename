@@ -7,6 +7,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [4.0.0] — 2026-04-03
+
+### Added
+- Default input folder: `./input` (auto-used on launch, no argument needed)
+- Default output folder: `./output` — renamed files are moved there, leaving input untouched
+- `/output <path>` command to change the output folder
+- `/inplace` command to toggle rename-in-place mode (renames files directly in input, no output folder)
+- Output folder is created automatically on first use
+
+### Changed
+- Input folder now defaults to `./input` relative to the script — no argument required for the common case
+
+---
+
 ## [3.0.0] — 2026-04-03
 
 ### Changed

@@ -2,8 +2,12 @@
 """
 file_rename.py — Batch file renamer
 
+By default reads from ./input and writes renamed files to ./output.
+Type a pattern to rename — NN for sequential, RND for random.
+
 Usage:
-    python3 file_rename.py [folder]
+    python3 file_rename.py          # uses ./input → ./output
+    python3 file_rename.py [folder] # override input folder
 
 Pattern syntax:
     NN / NNN / NNNN  →  sequential number  (N count = zero-pad width)
@@ -15,7 +19,7 @@ Examples:
     img-RND          →  img-a8f3k2xq.jpg …
 """
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 import os
 import random
@@ -24,7 +28,11 @@ import shutil
 import string
 import sys
 
-RAND_CHARS = string.ascii_lowercase + string.digits
+SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_IN  = os.path.join(SCRIPT_DIR, "input")
+DEFAULT_OUT = os.path.join(SCRIPT_DIR, "output")
+
+RAND_CHARS  = string.ascii_lowercase + string.digits
 RAND_LENGTH = 8
 
 
@@ -43,7 +51,7 @@ def make_stem(pattern, index, rand):
     return result
 
 
-def build_plan(folder, files, pattern):
+def build_plan(files, pattern):
     used: set[str] = set()
     plan = []
     for i, fname in enumerate(files, 1):
@@ -64,13 +72,10 @@ def build_plan(folder, files, pattern):
 
 
 def validate_pattern(pattern):
-    """Return a warning string, or None if the pattern looks valid."""
     has_seq = bool(re.search(r"N{2,}", pattern))
     has_rnd = "RND" in pattern
     if not has_seq and not has_rnd:
-        return "pattern has no NN or RND placeholder — all files would get the same name"
-    if has_seq and has_rnd:
-        return "pattern has both NN and RND — that works, just checking you meant it"
+        return "pattern has no NN or RND — all files would get the same name"
     return None
 
 
@@ -80,68 +85,72 @@ def tw():
     return shutil.get_terminal_size((80, 20)).columns
 
 
-def show_preview(plan, folder):
+def show_preview(plan, src_folder, dst_folder):
     col = min(48, (tw() - 8) // 2)
-    conflicts = 0
     rows = []
+    conflicts = 0
     for old, new in plan:
         trunc = (old[: col - 1] + "…") if len(old) > col else old
-        new_path = os.path.join(folder, new)
-        old_path = os.path.join(folder, old)
-        conflict = "  ⚠ conflict" if os.path.exists(new_path) and new_path != old_path else ""
+        dst = os.path.join(dst_folder, new)
+        src = os.path.join(src_folder, old)
+        conflict = "  ⚠ conflict" if os.path.exists(dst) and dst != src else ""
         if conflict:
             conflicts += 1
         rows.append((trunc, new, conflict))
 
     print()
-    # Compact view for large sets: first 5 … last 1
-    if len(rows) > 12:
-        display = rows[:5] + [None] + rows[-1:]
-    else:
-        display = rows
-
+    display = (rows[:5] + [None] + rows[-1:]) if len(rows) > 12 else rows
     for row in display:
         if row is None:
-            print(f"  {'  …  ' + str(len(rows) - 6) + ' more …':>{col}}  →")
+            print(f"  {'…  ' + str(len(rows) - 6) + ' more  …':>{col}}  →")
         else:
             trunc, new, conflict = row
             print(f"  {trunc:<{col}}  →  {new}{conflict}")
-
     print()
     if conflicts:
         print(f"  ⚠  {conflicts} conflict(s) will be skipped\n")
 
 
-def apply_plan(plan, folder):
+def apply_plan(plan, src_folder, dst_folder):
+    inplace = src_folder == dst_folder
+    if not inplace:
+        os.makedirs(dst_folder, exist_ok=True)
+
     ok = skipped = 0
     for old, new in plan:
-        op = os.path.join(folder, old)
-        np = os.path.join(folder, new)
-        if os.path.exists(np) and np != op:
+        src = os.path.join(src_folder, old)
+        dst = os.path.join(dst_folder, new)
+        if os.path.exists(dst) and dst != src:
             skipped += 1
             continue
         try:
-            os.rename(op, np)
+            shutil.move(src, dst)
             ok += 1
         except Exception as e:
             print(f"  ⚠  {old}: {e}")
-    msg = f"  ✅ Done!  {ok} renamed"
+
+    msg = f"  ✅ Done!  {ok} moved to {dst_folder}" if not inplace else f"  ✅ Done!  {ok} renamed"
     if skipped:
         msg += f",  {skipped} skipped"
     print(msg + "\n")
 
 
-def print_header(folder, files):
-    count = f"  ({len(files)} files)" if files is not None else ""
+def print_header(src, dst, files, inplace):
+    count = f"  ({len(files)} files)" if files is not None else "  (folder not found)"
+    dest_label = "in place" if inplace else dst
     print("\n╔══════════════════════════════════════════════╗")
     print("║    📂  FILE RENAME — BATCH FILE RENAMER  📂    ║")
     print("╚══════════════════════════════════════════════╝")
-    print(f"\n  Folder: {folder or 'not set'}{count}\n")
+    print(f"\n  Input:  {src}{count}")
+    print(f"  Output: {dest_label}\n")
     print("  Type a pattern — NN = sequential,  RND = random:\n")
     print("    image-NN      →  image-01.jpg, image-02.jpg …")
     print("    shot_NNNN     →  shot_0001.jpg, shot_0002.jpg …")
     print("    file-RND      →  file-a8f3k2xq.jpg …\n")
-    print("  /folder <path>   change folder     /quit   exit\n")
+    print("  /folder <path>   change input folder")
+    print("  /output <path>   change output folder")
+    print("  /inplace         toggle rename-in-place (skips output folder)")
+    print("  /quit            exit\n")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -149,22 +158,24 @@ def print_header(folder, files):
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="Batch file renamer — type a pattern like image-NN")
-    ap.add_argument("folder", nargs="?", help="Folder to rename files in")
+    ap.add_argument("folder",    nargs="?", help="Input folder (default: ./input)")
     ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = ap.parse_args()
 
-    folder = None
-    files = None
-
+    # Resolve input folder
     if args.folder:
-        p = os.path.abspath(os.path.expanduser(args.folder))
-        if not os.path.isdir(p):
-            print(f"⚠  Not a directory: {p}")
+        src = os.path.abspath(os.path.expanduser(args.folder))
+        if not os.path.isdir(src):
+            print(f"⚠  Not a directory: {src}")
             sys.exit(1)
-        folder = p
-        files = get_files(folder)
+    else:
+        src = DEFAULT_IN
 
-    print_header(folder, files)
+    dst     = DEFAULT_OUT
+    inplace = False
+    files   = get_files(src) if os.path.isdir(src) else None
+
+    print_header(src, dst, files, inplace)
 
     while True:
         try:
@@ -176,31 +187,51 @@ def main():
         if not text:
             continue
 
+        low = text.lower()
+
         # ── Builtins ─────────────────────────────────────────────────────────
 
-        if text.lower() in ("/quit", "/exit", "/q"):
+        if low in ("/quit", "/exit", "/q"):
             print("\n  👋 Goodbye!\n")
             break
 
-        if text.lower().startswith("/folder"):
+        if low.startswith("/folder"):
             arg = text[7:].strip()
             if not arg:
-                print(f"  ℹ  Folder: {folder or 'not set'}\n")
+                print(f"  ℹ  Input: {src}\n")
                 continue
             p = os.path.abspath(os.path.expanduser(arg))
             if not os.path.isdir(p):
                 print(f"  ⚠  Not a directory: {p}\n")
             else:
-                folder = p
-                files = get_files(folder)
-                print(f"  ✅ Folder: {folder}  ({len(files)} files)\n")
+                src   = p
+                files = get_files(src)
+                print(f"  ✅ Input: {src}  ({len(files)} files)\n")
             continue
 
-        # Bare directory path → change folder
+        if low.startswith("/output"):
+            arg = text[7:].strip()
+            if not arg:
+                print(f"  ℹ  Output: {'in place' if inplace else dst}\n")
+                continue
+            dst     = os.path.abspath(os.path.expanduser(arg))
+            inplace = False
+            print(f"  ✅ Output: {dst}\n")
+            continue
+
+        if low == "/inplace":
+            inplace = not inplace
+            if inplace:
+                print("  ✅ Mode: rename in place (files stay in input folder)\n")
+            else:
+                print(f"  ✅ Mode: move to output  ({dst})\n")
+            continue
+
+        # Bare directory path → change input folder
         if os.path.isdir(text):
-            folder = os.path.abspath(os.path.expanduser(text))
-            files = get_files(folder)
-            print(f"  ✅ Folder: {folder}  ({len(files)} files)\n")
+            src   = os.path.abspath(os.path.expanduser(text))
+            files = get_files(src)
+            print(f"  ✅ Input: {src}  ({len(files)} files)\n")
             continue
 
         if text.startswith("/"):
@@ -209,9 +240,13 @@ def main():
 
         # ── Pattern ───────────────────────────────────────────────────────────
 
-        if not folder:
-            print("  ⚠  Set a folder first:  /folder <path>\n")
+        if not os.path.isdir(src):
+            print(f"  ⚠  Input folder not found: {src}\n")
+            print(f"     Create it or set another:  /folder <path>\n")
             continue
+
+        if files is None:
+            files = get_files(src)
 
         warn = validate_pattern(text)
         if warn:
@@ -225,12 +260,13 @@ def main():
                 print()
                 continue
 
-        plan = build_plan(folder, files, text)
+        plan = build_plan(files, text)
         if not plan:
-            print("  📭 No files found.\n")
+            print("  📭 No files in input folder.\n")
             continue
 
-        show_preview(plan, folder)
+        effective_dst = src if inplace else dst
+        show_preview(plan, src, effective_dst)
 
         try:
             confirm = input(f"  {len(plan)} files  →  apply? [y/N]: ").strip().lower()
@@ -239,8 +275,8 @@ def main():
             continue
 
         if confirm == "y":
-            apply_plan(plan, folder)
-            files = get_files(folder)
+            apply_plan(plan, src, effective_dst)
+            files = get_files(src) if os.path.isdir(src) else []
         else:
             print("  Cancelled.\n")
 
