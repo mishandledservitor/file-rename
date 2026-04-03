@@ -1,54 +1,30 @@
 #!/usr/bin/env python3
 """
-file_rename.py — Rename files in a folder sequentially or randomly.
+file_rename.py — Batch file renamer (sequential or random)
 
 Usage:
-    python file_rename.py [folder]
-    pip install rich  (only dependency)
+    python3 file_rename.py                              # Interactive mode
+    python3 file_rename.py ./input                      # Pre-set folder, interactive
+    python3 file_rename.py ./input --seq                # Quick sequential rename
+    python3 file_rename.py ./input --rand               # Quick random rename
+    python3 file_rename.py ./input --seq --preview      # Preview without renaming
+    python3 file_rename.py ./input --seq --prefix img_  # Sequential with prefix
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
+import argparse
 import os
 import random
+import shutil
 import string
 import sys
-from pathlib import Path
 
-try:
-    from rich import box
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.prompt import Confirm, IntPrompt, Prompt
-    from rich.table import Table
-except ImportError:
-    print("Missing dependency — install with:  pip install rich")
-    sys.exit(1)
-
-console = Console()
-
-# ─── Defaults ─────────────────────────────────────────────────────────────────
-
-DEFAULT_CONFIG: dict = {
-    "folder": None,
-    "mode": "sequential",       # "sequential" | "random"
-    "filter_ext": None,         # None = all files, else e.g. ".jpg"
-    "preserve_ext": True,
-    # Sequential
-    "seq_prefix": "",
-    "seq_suffix": "",
-    "seq_start": 1,
-    "seq_step": 1,
-    "seq_padding": 4,
-    # Random
-    "rand_length": 8,
-    "rand_charset": "alphanum",  # alphanum | hex | alpha | digits | custom
-    "rand_custom_chars": "",
-}
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CHARSETS = {
     "alphanum": string.ascii_letters + string.digits,
-    "hex":      string.hexdigits[:16],  # 0-9 a-f
+    "hex":      string.hexdigits[:16],   # 0-9 a-f
     "alpha":    string.ascii_letters,
     "digits":   string.digits,
 }
@@ -61,294 +37,460 @@ CHARSET_LABELS = {
     "custom":   "(user-defined)",
 }
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def clear_screen():
-    os.system("cls" if os.name == "nt" else "clear")
+# ── Utilities ────────────────────────────────────────────────────────────────
 
-
-def pause(msg: str = "  Press Enter to continue"):
-    Prompt.ask(msg, default="")
+def resolve_path(path):
+    return os.path.abspath(os.path.expanduser(path))
 
 
-def header():
-    console.print()
-    console.print(Panel.fit(
-        "[bold cyan]File Renamer[/bold cyan]  [dim]— sequential or random[/dim]",
-        border_style="cyan",
-    ))
-    console.print()
-
-
-def show_config(cfg: dict):
-    t = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-    t.add_column(style="dim", no_wrap=True)
-    t.add_column()
-
-    folder_display = str(cfg["folder"]) if cfg["folder"] else "[red]not set[/red]"
-    t.add_row("Folder", folder_display)
-    t.add_row("Mode", f"[yellow]{cfg['mode']}[/yellow]")
-    t.add_row(
-        "Filter ext",
-        cfg["filter_ext"] if cfg["filter_ext"] else "[dim]all files[/dim]",
+def get_files(folder, filter_ext=None):
+    files = sorted(
+        f for f in os.listdir(folder)
+        if os.path.isfile(os.path.join(folder, f)) and not f.startswith(".")
     )
-    t.add_row("Preserve ext", "[green]yes[/green]" if cfg["preserve_ext"] else "[red]no[/red]")
-
-    if cfg["mode"] == "sequential":
-        prefix = cfg["seq_prefix"] or "[dim](none)[/dim]"
-        suffix = cfg["seq_suffix"] or "[dim](none)[/dim]"
-        num_str = str(cfg["seq_start"]).zfill(cfg["seq_padding"])
-        example = f"{cfg['seq_prefix']}{num_str}{cfg['seq_suffix']}.ext"
-        t.add_row("Prefix", prefix)
-        t.add_row("Suffix", suffix)
-        t.add_row("Start / Step", f"{cfg['seq_start']} / {cfg['seq_step']}")
-        t.add_row("Zero-pad width", str(cfg["seq_padding"]))
-        t.add_row("Example", f"[green]{example}[/green]")
-    else:
-        charset = cfg["rand_charset"]
-        if charset == "custom":
-            chars_label = cfg["rand_custom_chars"] or "[red]not set[/red]"
-        else:
-            chars_label = CHARSET_LABELS[charset]
-        t.add_row("Name length", str(cfg["rand_length"]))
-        t.add_row("Charset", f"{charset}  [dim]({chars_label})[/dim]")
-
-    console.print(Panel(t, title="[bold]Configuration[/bold]", border_style="blue"))
+    if filter_ext:
+        ext = filter_ext.lower()
+        files = [f for f in files if os.path.splitext(f)[1].lower() == ext]
+    return files
 
 
-# ─── Sub-menus ────────────────────────────────────────────────────────────────
-
-def menu_set_folder(cfg: dict):
-    console.print("[bold]Enter folder path[/bold] (Enter = current directory):")
-    raw = Prompt.ask("  Path", default=str(Path.cwd()))
-    p = Path(raw).expanduser().resolve()
-    if not p.is_dir():
-        console.print(f"[red]Not a directory:[/red] {p}")
-        pause()
-        return
-    cfg["folder"] = p
-    console.print(f"[green]Folder set:[/green] {p}")
-    pause()
+def term_width():
+    return shutil.get_terminal_size((80, 20)).columns
 
 
-def menu_choose_mode(cfg: dict):
-    console.print("\n[bold]Rename mode[/bold]")
-    console.print("  [cyan]1[/cyan]  Sequential  — file_0001.jpg, file_0002.jpg …")
-    console.print("  [cyan]2[/cyan]  Random      — a3Fx9Kqz.jpg, bT7mWnPs.jpg …")
-    choice = Prompt.ask("  Select", choices=["1", "2"], default="1")
-    cfg["mode"] = "sequential" if choice == "1" else "random"
-    console.print(f"[green]Mode:[/green] {cfg['mode']}")
-    pause()
+def draw_progress(current, total, bar_width=32):
+    w = min(bar_width, term_width() - 28)
+    pct = current / total if total > 0 else 0
+    filled = int(w * pct)
+    bar = "█" * filled + "░" * (w - filled)
+    line = f"\r   ┃{bar}┃ {current}/{total}"
+    sys.stdout.write(line)
+    sys.stdout.flush()
 
 
-def menu_configure_sequential(cfg: dict):
-    console.print("\n[bold]Sequential options[/bold]")
-    cfg["seq_prefix"]  = Prompt.ask("  Prefix",         default=cfg["seq_prefix"])
-    cfg["seq_suffix"]  = Prompt.ask("  Suffix",         default=cfg["seq_suffix"])
-    cfg["seq_start"]   = IntPrompt.ask("  Start number", default=cfg["seq_start"])
-    cfg["seq_step"]    = IntPrompt.ask("  Step",         default=cfg["seq_step"])
-    cfg["seq_padding"] = IntPrompt.ask("  Zero-pad width (4 → 0001)", default=cfg["seq_padding"])
-    pause()
+# ── Plan builder ─────────────────────────────────────────────────────────────
 
-
-def menu_configure_random(cfg: dict):
-    console.print("\n[bold]Random options[/bold]")
-    cfg["rand_length"] = IntPrompt.ask("  Name length (characters)", default=cfg["rand_length"])
-    console.print("  Charset:")
-    console.print("    [cyan]1[/cyan]  Alphanumeric  (a-z A-Z 0-9)")
-    console.print("    [cyan]2[/cyan]  Hex           (0-9 a-f)")
-    console.print("    [cyan]3[/cyan]  Letters only  (a-z A-Z)")
-    console.print("    [cyan]4[/cyan]  Digits only   (0-9)")
-    console.print("    [cyan]5[/cyan]  Custom")
-    c = Prompt.ask("  Select", choices=["1", "2", "3", "4", "5"], default="1")
-    cfg["rand_charset"] = {"1": "alphanum", "2": "hex", "3": "alpha", "4": "digits", "5": "custom"}[c]
-    if cfg["rand_charset"] == "custom":
-        cfg["rand_custom_chars"] = Prompt.ask("  Enter your custom character set")
-    pause()
-
-
-def menu_configure_filter(cfg: dict):
-    console.print("\n[bold]Extension filter[/bold]")
-    console.print("  Leave blank to rename [italic]all[/italic] files.")
-    console.print("  Or enter an extension to limit scope, e.g. [dim].jpg[/dim]  [dim].txt[/dim]")
-    raw = Prompt.ask("  Extension", default=cfg["filter_ext"] or "").strip()
-    if raw and not raw.startswith("."):
-        raw = f".{raw}"
-    cfg["filter_ext"] = raw or None
-    cfg["preserve_ext"] = Confirm.ask("  Preserve the file's original extension?", default=True)
-    pause()
-
-
-# ─── Plan builder ─────────────────────────────────────────────────────────────
-
-def build_plan(cfg: dict) -> list[tuple[Path, Path]]:
-    folder: Path = cfg["folder"]
-    files = sorted(f for f in folder.iterdir() if f.is_file())
-
-    if cfg["filter_ext"]:
-        ext = cfg["filter_ext"].lower()
-        files = [f for f in files if f.suffix.lower() == ext]
-
+def build_plan(folder, cfg):
+    files = get_files(folder, cfg["filter_ext"])
     if not files:
         return []
 
-    plan: list[tuple[Path, Path]] = []
+    plan = []
 
     if cfg["mode"] == "sequential":
         num = cfg["seq_start"]
-        for f in files:
+        for fname in files:
+            _, orig_ext = os.path.splitext(fname)
             stem = f"{cfg['seq_prefix']}{str(num).zfill(cfg['seq_padding'])}{cfg['seq_suffix']}"
-            ext  = f.suffix if cfg["preserve_ext"] else ""
-            plan.append((f, folder / (stem + ext)))
+            ext = orig_ext if cfg["preserve_ext"] else ""
+            plan.append((fname, stem + ext))
             num += cfg["seq_step"]
 
     else:  # random
         charset = CHARSETS.get(cfg["rand_charset"]) or cfg["rand_custom_chars"]
         if not charset:
-            console.print("[red]Custom charset is empty — configure it first.[/red]")
+            print("  ⚠  Custom charset is empty — set it with /chars <characters>")
             return []
         used: set[str] = set()
-        for f in files:
-            for _ in range(10_000):
+        for fname in files:
+            _, orig_ext = os.path.splitext(fname)
+            for _ in range(100_000):
                 stem = "".join(random.choices(charset, k=cfg["rand_length"]))
                 if stem not in used:
                     used.add(stem)
                     break
             else:
-                console.print("[red]Could not generate enough unique names. Try a longer length or larger charset.[/red]")
+                print("  ⚠  Could not generate enough unique names — try a longer /length")
                 return []
-            ext = f.suffix if cfg["preserve_ext"] else ""
-            plan.append((f, folder / (stem + ext)))
+            ext = orig_ext if cfg["preserve_ext"] else ""
+            plan.append((fname, stem + ext))
 
     return plan
 
 
-def preview_plan(plan: list[tuple[Path, Path]]):
+# ── Display ──────────────────────────────────────────────────────────────────
+
+def print_header():
+    print("\n╔══════════════════════════════════════════════╗")
+    print("║    📂  FILE RENAME — BATCH FILE RENAMER  📂    ║")
+    print("╚══════════════════════════════════════════════╝")
+
+
+def print_status(cfg):
+    folder = cfg["folder"] or "not set"
+    filt   = cfg["filter_ext"] or "all files"
+    ext_m  = "keep" if cfg["preserve_ext"] else "strip"
+
+    print(f"\n  Folder:  {folder}")
+    print(f"  Mode:    {cfg['mode']}")
+    print(f"  Filter:  {filt}  (extension: {ext_m})")
+
+    if cfg["mode"] == "sequential":
+        num_str = str(cfg["seq_start"]).zfill(cfg["seq_padding"])
+        example = f"{cfg['seq_prefix']}{num_str}{cfg['seq_suffix']}.ext"
+        print(f"  Options: prefix={cfg['seq_prefix']!r}  suffix={cfg['seq_suffix']!r}  "
+              f"start={cfg['seq_start']}  step={cfg['seq_step']}  pad={cfg['seq_padding']}")
+        print(f"  Example: {example}")
+    else:
+        cs = cfg["rand_charset"]
+        chars = cfg["rand_custom_chars"] if cs == "custom" else CHARSETS.get(cs, "")
+        label = CHARSET_LABELS.get(cs, cs)
+        print(f"  Options: length={cfg['rand_length']}  charset={cs}  ({label},  {len(chars)} chars)")
+
+    if cfg["folder"] and os.path.isdir(cfg["folder"]):
+        files = get_files(cfg["folder"], cfg["filter_ext"])
+        print(f"\n  📁 {len(files)} file(s) ready to rename")
+
+    print()
+
+
+def print_help():
+    print("\n  Commands:")
+    print("    /folder <path>        — set working folder")
+    print("    /seq                  — switch to sequential mode")
+    print("    /rand                 — switch to random mode")
+    print("    /prefix [text]        — set name prefix       (seq, e.g. /prefix photo_)")
+    print("    /suffix [text]        — set name suffix       (seq, e.g. /suffix _edit)")
+    print("    /start <n>            — set start number      (seq, default 1)")
+    print("    /step <n>             — set increment step    (seq, default 1)")
+    print("    /pad <n>              — set zero-pad width    (seq, default 4 → 0001)")
+    print("    /length <n>           — set name length       (rand, default 8)")
+    print("    /charset <name>       — alphanum|hex|alpha|digits|custom  (rand)")
+    print("    /chars <characters>   — set custom charset characters")
+    print("    /filter [.ext]        — limit to extension    (blank = all files)")
+    print("    /ext keep|strip       — preserve or drop original file extension")
+    print("    /preview              — preview changes without applying")
+    print("    /go                   — apply renames (asks for confirmation)")
+    print("    /status               — show current settings")
+    print("    /help                 — show this help")
+    print("    /quit                 — exit\n")
+
+
+def print_preview(plan, folder):
     if not plan:
-        console.print("[yellow]No files match — nothing to rename.[/yellow]")
+        print("\n  📭 No files to rename.\n")
         return
 
-    t = Table(box=box.SIMPLE_HEAD)
-    t.add_column("Original",  style="dim",   no_wrap=True)
-    t.add_column("",          justify="center", style="cyan")
-    t.add_column("New name",  style="green", no_wrap=True)
-    t.add_column("",          style="red")
+    tw = term_width()
+    col = min(40, (tw - 10) // 2)
 
+    conflicts = 0
+    print(f"\n  {'Original':<{col}}    New name")
+    print(f"  {'─' * col}    {'─' * col}")
     for old, new in plan:
-        conflict = "conflict!" if new.exists() and new != old else ""
-        t.add_row(old.name, "→", new.name, conflict)
+        new_path = os.path.join(folder, new)
+        old_path = os.path.join(folder, old)
+        conflict = ""
+        if os.path.exists(new_path) and new_path != old_path:
+            conflict = "  ⚠ conflict"
+            conflicts += 1
+        old_trunc = old[:col - 1] + "…" if len(old) > col else old
+        print(f"  {old_trunc:<{col}}  →  {new}{conflict}")
 
-    console.print(Panel(
-        t,
-        title=f"[bold]Preview — {len(plan)} file(s)[/bold]",
-        border_style="green",
-    ))
+    print(f"\n  {len(plan)} file(s) will be renamed", end="")
+    if conflicts:
+        print(f",  {conflicts} conflict(s) will be skipped", end="")
+    print("\n")
 
 
-def apply_plan(plan: list[tuple[Path, Path]]) -> int:
-    ok = 0
-    for old, new in plan:
+# ── Apply renames ────────────────────────────────────────────────────────────
+
+def apply_renames(plan, folder):
+    total   = len(plan)
+    ok      = 0
+    skipped = 0
+
+    print()
+    for i, (old, new) in enumerate(plan, 1):
+        draw_progress(i, total)
+        old_path = os.path.join(folder, old)
+        new_path = os.path.join(folder, new)
+        if os.path.exists(new_path) and new_path != old_path:
+            skipped += 1
+            continue
         try:
-            old.rename(new)
+            os.rename(old_path, new_path)
             ok += 1
-        except Exception as exc:
-            console.print(f"[red]  Error:[/red] {old.name} → {exc}")
-    return ok
+        except Exception as e:
+            print(f"\n  ⚠  {old}: {e}")
+
+    draw_progress(total, total)
+    print()
+    print(f"\n  ✅ Done!  {ok} renamed", end="")
+    if skipped:
+        print(f",  {skipped} skipped (conflicts)", end="")
+    print("\n")
 
 
-# ─── Main menu ────────────────────────────────────────────────────────────────
+# ── Interactive mode ─────────────────────────────────────────────────────────
 
-def main_menu(cfg: dict):
+def interactive_mode(cfg):
+    print_header()
+    print_status(cfg)
+    print_help()
+
     while True:
-        clear_screen()
-        header()
-        show_config(cfg)
-
-        console.print("[bold]Main Menu[/bold]")
-        console.print("  [cyan]1[/cyan]  Set folder")
-        console.print("  [cyan]2[/cyan]  Choose mode          (sequential / random)")
-        console.print("  [cyan]3[/cyan]  Configure mode options")
-        console.print("  [cyan]4[/cyan]  Extension filter")
-        console.print("  [cyan]5[/cyan]  Preview changes")
-        console.print("  [cyan]6[/cyan]  [bold green]Apply renames[/bold green]")
-        console.print("  [cyan]q[/cyan]  Quit")
-        console.print()
-
-        choice = Prompt.ask("  Select", choices=["1", "2", "3", "4", "5", "6", "q"])
-
-        if choice == "1":
-            menu_set_folder(cfg)
-
-        elif choice == "2":
-            menu_choose_mode(cfg)
-
-        elif choice == "3":
-            if cfg["mode"] == "sequential":
-                menu_configure_sequential(cfg)
-            else:
-                menu_configure_random(cfg)
-
-        elif choice == "4":
-            menu_configure_filter(cfg)
-
-        elif choice == "5":
-            if not cfg["folder"]:
-                console.print("[red]Set a folder first.[/red]")
-                pause()
-                continue
-            plan = build_plan(cfg)
-            preview_plan(plan)
-            pause()
-
-        elif choice == "6":
-            if not cfg["folder"]:
-                console.print("[red]Set a folder first.[/red]")
-                pause()
-                continue
-            plan = build_plan(cfg)
-            if not plan:
-                pause()
-                continue
-            preview_plan(plan)
-            conflicts = [(o, n) for o, n in plan if n.exists() and n != o]
-            if conflicts:
-                console.print(f"[red]⚠  {len(conflicts)} conflict(s) detected — those files will not be renamed.[/red]")
-                plan = [(o, n) for o, n in plan if not (n.exists() and n != o)]
-            if not plan:
-                console.print("[yellow]Nothing left to rename after removing conflicts.[/yellow]")
-                pause()
-                continue
-            if Confirm.ask(f"  Rename [bold]{len(plan)}[/bold] file(s)?", default=False):
-                count = apply_plan(plan)
-                console.print(f"[bold green]Done — {count} file(s) renamed.[/bold green]")
-            else:
-                console.print("[dim]Cancelled.[/dim]")
-            pause()
-
-        elif choice == "q":
-            console.print("[dim]Goodbye.[/dim]")
+        try:
+            text = input("  ▶ ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n\n  👋 Goodbye!\n")
             break
 
+        if not text:
+            continue
 
-# ─── Entry point ──────────────────────────────────────────────────────────────
+        # Allow bare folder paths without a /command prefix
+        if not text.startswith("/"):
+            if os.path.isdir(text):
+                cfg["folder"] = resolve_path(text)
+                files = get_files(cfg["folder"], cfg["filter_ext"])
+                print(f"  ✅ Folder: {cfg['folder']}")
+                print(f"  📁 {len(files)} file(s) found")
+            else:
+                print("  ⚠  Commands start with /  — type /help to see options.")
+            continue
 
-if __name__ == "__main__":
-    import argparse
+        parts = text.split(maxsplit=1)
+        cmd   = parts[0].lower()
+        arg   = parts[1].strip() if len(parts) > 1 else ""
 
-    ap = argparse.ArgumentParser(
-        description="Rename files in a folder sequentially or randomly.",
-        epilog="All options can also be set interactively via the menu.",
+        # ── Navigation ──────────────────────────────────────────────────────
+
+        if cmd in ("/quit", "/exit", "/q"):
+            print("\n  👋 Goodbye!\n")
+            break
+
+        elif cmd == "/help":
+            print_help()
+
+        elif cmd == "/status":
+            print_status(cfg)
+
+        # ── Folder ──────────────────────────────────────────────────────────
+
+        elif cmd == "/folder":
+            if not arg:
+                print(f"  ℹ  Folder: {cfg['folder'] or 'not set'}")
+            else:
+                p = resolve_path(arg)
+                if not os.path.isdir(p):
+                    print(f"  ⚠  Not a directory: {p}")
+                else:
+                    cfg["folder"] = p
+                    files = get_files(p, cfg["filter_ext"])
+                    print(f"  ✅ Folder: {p}")
+                    print(f"  📁 {len(files)} file(s) found")
+
+        # ── Mode ────────────────────────────────────────────────────────────
+
+        elif cmd == "/seq":
+            cfg["mode"] = "sequential"
+            print("  ✅ Mode: sequential")
+
+        elif cmd == "/rand":
+            cfg["mode"] = "random"
+            print("  ✅ Mode: random")
+
+        # ── Sequential options ───────────────────────────────────────────────
+
+        elif cmd == "/prefix":
+            cfg["seq_prefix"] = arg
+            print(f"  ✅ Prefix: {arg!r}")
+
+        elif cmd == "/suffix":
+            cfg["seq_suffix"] = arg
+            print(f"  ✅ Suffix: {arg!r}")
+
+        elif cmd == "/start":
+            try:
+                cfg["seq_start"] = int(arg)
+                print(f"  ✅ Start: {cfg['seq_start']}")
+            except ValueError:
+                print("  ⚠  Expected an integer, e.g. /start 100")
+
+        elif cmd == "/step":
+            try:
+                v = int(arg)
+                if v < 1:
+                    raise ValueError
+                cfg["seq_step"] = v
+                print(f"  ✅ Step: {v}")
+            except ValueError:
+                print("  ⚠  Expected a positive integer, e.g. /step 2")
+
+        elif cmd == "/pad":
+            try:
+                v = int(arg)
+                if v < 1:
+                    raise ValueError
+                cfg["seq_padding"] = v
+                print(f"  ✅ Pad width: {v}  →  {str(cfg['seq_start']).zfill(v)}")
+            except ValueError:
+                print("  ⚠  Expected a positive integer, e.g. /pad 4")
+
+        # ── Random options ───────────────────────────────────────────────────
+
+        elif cmd == "/length":
+            try:
+                v = int(arg)
+                if v < 1:
+                    raise ValueError
+                cfg["rand_length"] = v
+                print(f"  ✅ Length: {v}")
+            except ValueError:
+                print("  ⚠  Expected a positive integer, e.g. /length 12")
+
+        elif cmd == "/charset":
+            valid = ("alphanum", "hex", "alpha", "digits", "custom")
+            if arg in valid:
+                cfg["rand_charset"] = arg
+                label = CHARSET_LABELS.get(arg, "")
+                print(f"  ✅ Charset: {arg}  ({label})")
+            elif arg:
+                print(f"  ⚠  Unknown charset. Options: {', '.join(valid)}")
+            else:
+                print(f"  ℹ  Charset: {cfg['rand_charset']}  ({CHARSET_LABELS.get(cfg['rand_charset'], '')})")
+
+        elif cmd == "/chars":
+            if not arg:
+                print(f"  ℹ  Custom chars: {cfg['rand_custom_chars']!r}  ({len(cfg['rand_custom_chars'])} chars)")
+            else:
+                cfg["rand_custom_chars"] = arg
+                cfg["rand_charset"] = "custom"
+                print(f"  ✅ Custom charset: {arg!r}  ({len(arg)} chars)")
+
+        # ── Filter / extension ───────────────────────────────────────────────
+
+        elif cmd == "/filter":
+            if not arg:
+                cfg["filter_ext"] = None
+                print("  ✅ Filter: all files")
+            else:
+                ext = arg if arg.startswith(".") else f".{arg}"
+                cfg["filter_ext"] = ext.lower()
+                print(f"  ✅ Filter: {ext}")
+                if cfg["folder"] and os.path.isdir(cfg["folder"]):
+                    files = get_files(cfg["folder"], cfg["filter_ext"])
+                    print(f"  📁 {len(files)} matching file(s)")
+
+        elif cmd == "/ext":
+            if arg == "keep":
+                cfg["preserve_ext"] = True
+                print("  ✅ Extension: keep original")
+            elif arg == "strip":
+                cfg["preserve_ext"] = False
+                print("  ✅ Extension: strip")
+            else:
+                print("  ⚠  Use /ext keep  or  /ext strip")
+
+        # ── Preview / go ─────────────────────────────────────────────────────
+
+        elif cmd == "/preview":
+            if not cfg["folder"]:
+                print("  ⚠  Set a folder first: /folder <path>")
+            else:
+                plan = build_plan(cfg["folder"], cfg)
+                print_preview(plan, cfg["folder"])
+
+        elif cmd == "/go":
+            if not cfg["folder"]:
+                print("  ⚠  Set a folder first: /folder <path>")
+                continue
+            plan = build_plan(cfg["folder"], cfg)
+            if not plan:
+                print("  📭 No files to rename.")
+                continue
+            print_preview(plan, cfg["folder"])
+            try:
+                confirm = input("  Apply these renames? [y/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Cancelled.")
+                continue
+            if confirm == "y":
+                apply_renames(plan, cfg["folder"])
+            else:
+                print("  Cancelled.\n")
+
+        else:
+            print(f"  ⚠  Unknown command: {cmd}. Type /help for commands.")
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Batch file renamer — sequential or random",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                                   Interactive mode
+  %(prog)s ./input                           Pre-set folder, interactive
+  %(prog)s ./input --seq --prefix img_ --pad 4   Quick sequential rename
+  %(prog)s ./input --rand --length 12        Quick random rename
+  %(prog)s ./input --seq --preview           Preview without renaming
+  %(prog)s ./input --seq --filter .jpg       Sequential, JPEGs only
+        """
     )
-    ap.add_argument("folder", nargs="?", help="Folder to operate on (optional)")
-    args = ap.parse_args()
+    parser.add_argument("folder",       nargs="?",          help="Folder to rename files in")
+    parser.add_argument("--seq",        action="store_true", help="Sequential mode")
+    parser.add_argument("--rand",       action="store_true", help="Random mode")
+    parser.add_argument("--prefix",     default="",          help="Name prefix (sequential)")
+    parser.add_argument("--suffix",     default="",          help="Name suffix (sequential)")
+    parser.add_argument("--start",      type=int, default=1, help="Start number (sequential, default 1)")
+    parser.add_argument("--step",       type=int, default=1, help="Step size (sequential, default 1)")
+    parser.add_argument("--pad",        type=int, default=4, help="Zero-pad width (sequential, default 4)")
+    parser.add_argument("--length",     type=int, default=8, help="Name length (random, default 8)")
+    parser.add_argument("--charset",    default="alphanum",
+                        choices=["alphanum", "hex", "alpha", "digits", "custom"],
+                        help="Charset (random, default alphanum)")
+    parser.add_argument("--chars",      default="",          help="Custom charset characters")
+    parser.add_argument("--filter",     default=None,        help="Extension filter, e.g. .jpg")
+    parser.add_argument("--strip-ext",  action="store_true", help="Strip original extension from new names")
+    parser.add_argument("--preview",    action="store_true", help="Preview changes only, do not rename")
+    parser.add_argument("--version",    action="version",    version=f"%(prog)s {__version__}")
 
-    cfg = dict(DEFAULT_CONFIG)
+    args = parser.parse_args()
+
+    cfg = {
+        "folder":           None,
+        "mode":             "random" if args.rand else "sequential",
+        "filter_ext":       args.filter,
+        "preserve_ext":     not args.strip_ext,
+        "seq_prefix":       args.prefix,
+        "seq_suffix":       args.suffix,
+        "seq_start":        args.start,
+        "seq_step":         args.step,
+        "seq_padding":      args.pad,
+        "rand_length":      args.length,
+        "rand_charset":     args.charset,
+        "rand_custom_chars": args.chars,
+    }
 
     if args.folder:
-        p = Path(args.folder).expanduser().resolve()
-        if not p.is_dir():
-            console.print(f"[red]Not a directory:[/red] {p}")
+        p = resolve_path(args.folder)
+        if not os.path.isdir(p):
+            print(f"⚠  Not a directory: {p}")
             sys.exit(1)
         cfg["folder"] = p
 
-    main_menu(cfg)
+    # Non-interactive: folder + explicit mode flag given
+    if cfg["folder"] and (args.seq or args.rand):
+        plan = build_plan(cfg["folder"], cfg)
+        print_preview(plan, cfg["folder"])
+        if args.preview or not plan:
+            return
+        try:
+            confirm = input("  Apply these renames? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled.")
+            sys.exit(0)
+        if confirm == "y":
+            apply_renames(plan, cfg["folder"])
+        return
+
+    interactive_mode(cfg)
+
+
+if __name__ == "__main__":
+    main()

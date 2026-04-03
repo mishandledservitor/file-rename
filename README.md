@@ -1,80 +1,98 @@
 # file-rename
 
-A small interactive CLI tool for renaming files in a folder — either **sequentially** (numbered) or **randomly** (generated names).
-
-## Requirements
-
-Python 3.8+ and one library:
+A command-line tool for batch renaming files — either **sequentially** (numbered) or **randomly** (generated names). No dependencies beyond Python 3.
 
 ```
-pip install rich
+╔══════════════════════════════════════════════╗
+║    📂  FILE RENAME — BATCH FILE RENAMER  📂    ║
+╚══════════════════════════════════════════════╝
+
+  Folder:  /Users/simon/photos
+  Mode:    sequential
+  Filter:  .jpg  (extension: keep)
+  Options: prefix='img_'  suffix=''  start=1  step=1  pad=4
+  Example: img_0001.jpg
+
+  📁 16 file(s) ready to rename
 ```
 
 ## Usage
 
-```
-python3 file_rename.py [folder]
-```
-
-Pass an optional folder path to pre-fill it, or set it from the interactive menu.
-
-## Features
-
-### Two rename modes
-
-**Sequential** — produces ordered, numbered filenames:
-```
-photo_0001.jpg
-photo_0002.jpg
-photo_0003.jpg
-```
-Options: prefix, suffix, start number, step size, zero-pad width.
-
-**Random** — produces unique random filenames:
-```
-a3Fx9Kqz.jpg
-bT7mWnPs.jpg
-xQ2rLmVn.jpg
-```
-Options: name length, charset (alphanumeric / hex / letters / digits / custom).
-
-### Common options
-
-- **Extension filter** — limit renaming to a specific file type (e.g. `.jpg`, `.txt`), or process all files.
-- **Preserve extension** — keep the original file extension in the new name (on by default).
-- **Preview** — see the full old → new mapping before anything is touched.
-- **Conflict detection** — files that would overwrite an existing name are skipped automatically.
-
-## Interactive menu
-
-```
-╭─ File Renamer ─ sequential or random ─╮
-│                                        │
-
-  Configuration
-  ┌──────────────────────────────────┐
-  │ Folder    /path/to/my/images     │
-  │ Mode      sequential             │
-  │ …                                │
-  └──────────────────────────────────┘
-
-  Main Menu
-    1  Set folder
-    2  Choose mode          (sequential / random)
-    3  Configure mode options
-    4  Extension filter
-    5  Preview changes
-    6  Apply renames
-    q  Quit
+```bash
+./file-rename                              # Interactive mode
+./file-rename ./input                      # Pre-set folder, interactive
+./file-rename ./input --seq                # Quick sequential rename
+./file-rename ./input --rand               # Quick random rename
+./file-rename ./input --seq --preview      # Preview without renaming
 ```
 
-## Example workflow
+Or directly with Python:
 
-1. Run `python3 file_rename.py ./input`
-2. Pick **2 → Sequential**
-3. Pick **3** and set prefix to `photo_`, padding to `4`
-4. Pick **5** to preview the changes
-5. Pick **6** and confirm — done
+```bash
+python3 file_rename.py [folder] [options]
+```
+
+## Interactive commands
+
+Once inside the tool, type `/help` to see all commands:
+
+| Command | Description |
+|---------|-------------|
+| `/folder <path>` | Set working folder |
+| `/seq` | Switch to sequential mode |
+| `/rand` | Switch to random mode |
+| `/prefix <text>` | Name prefix — e.g. `/prefix photo_` |
+| `/suffix <text>` | Name suffix — e.g. `/suffix _final` |
+| `/start <n>` | Start number (sequential, default `1`) |
+| `/step <n>` | Step size (sequential, default `1`) |
+| `/pad <n>` | Zero-pad width (sequential, default `4` → `0001`) |
+| `/length <n>` | Name length (random, default `8`) |
+| `/charset <name>` | `alphanum` \| `hex` \| `alpha` \| `digits` \| `custom` |
+| `/chars <chars>` | Set custom charset characters |
+| `/filter [.ext]` | Limit to a file extension — blank resets to all files |
+| `/ext keep\|strip` | Preserve or drop the original extension |
+| `/preview` | Show old → new mapping without touching files |
+| `/go` | Apply renames (confirmation required) |
+| `/status` | Show current configuration |
+| `/quit` | Exit |
+
+## Non-interactive flags
+
+```
+--seq            Sequential mode
+--rand           Random mode
+--prefix TEXT    Name prefix
+--suffix TEXT    Name suffix
+--start N        Start number (default 1)
+--step N         Step size (default 1)
+--pad N          Zero-pad width (default 4)
+--length N       Name length for random mode (default 8)
+--charset NAME   alphanum | hex | alpha | digits | custom
+--chars TEXT     Custom charset characters
+--filter .EXT    Only rename files with this extension
+--strip-ext      Remove the original extension from new names
+--preview        Show preview only, do not rename
+--version        Show version and exit
+```
+
+## Examples
+
+**Sequential with a prefix:**
+```bash
+./file-rename ./input --seq --prefix shot_ --pad 3
+# Screenshot 2026-04-03.jpg  →  shot_001.jpg
+```
+
+**Random 12-character hex names:**
+```bash
+./file-rename ./input --rand --length 12 --charset hex
+# photo.jpg  →  3a9fe1c04b2d.jpg
+```
+
+**JPEGs only, preview first:**
+```bash
+./file-rename ./input --seq --filter .jpg --preview
+```
 
 ## Version
 
