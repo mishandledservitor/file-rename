@@ -7,6 +7,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [3.0.0] — 2026-04-03
+
+### Changed
+- Replaced the entire command system with a single pattern input — type `image-NN` or `file-RND` and press Enter
+- `NN` / `NNN` / `NNNN` sets sequential numbering; N count controls zero-padding
+- `RND` generates a unique 8-char random alphanumeric string per file
+- Compact preview for large sets (shows first 5 + last 1 with count of hidden rows)
+- Validation warning when a pattern has no `NN` or `RND` placeholder
+
+### Removed
+- All `/prefix`, `/suffix`, `/start`, `/step`, `/pad`, `/length`, `/charset`, `/chars`, `/filter`, `/ext`, `/preview`, `/go` commands
+- All non-interactive CLI flags except `--version`
+
+---
+
 ## [2.0.0] — 2026-04-03
 
 ### Changed
