@@ -85,3 +85,7 @@ To rename files in place instead (no output folder), type `/inplace` to toggle t
 ## Version
 
 See [CHANGELOG.md](CHANGELOG.md).
+
+## Licence
+
+MIT. See [`LICENSE`](LICENSE).
