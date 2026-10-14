@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Working data (not tracked)
+input/
+output/
+
+# Agent and personal files
+.claude/settings.local.json
+.claude/worktrees/
+.claude/skills/
+HANDOFF.md
+notes/
